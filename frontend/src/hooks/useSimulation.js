@@ -7,6 +7,8 @@ import DISTRICTS, {
   TOTAL_VACCINES,
 } from '../data/districtData'
 
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+
 const DISTRICT_ALIASES = {
   barishal: 'Barisal',
   bogura: 'Bogra',
@@ -196,16 +198,6 @@ const getDistrictPoints = (district) => {
   return points
 }
 
-const computeLogistic = (week) => 1 / (1 + Math.exp(-0.18 * (week - 24)))
-
-const computeCases = ({ district, week, vaccines }) => {
-  const vaccineShare = vaccines / TOTAL_VACCINES
-  const vaccineShield = 0.18 + vaccineShare * 0.62
-  const adjustedRate = district.baseInfectionRate * (1 - vaccineShield)
-  const growth = computeLogistic(week)
-  return district.population * adjustedRate * (0.32 + 0.78 * growth)
-}
-
 const buildNarrative = ({
   currentWeek,
   topDistrict,
@@ -224,6 +216,27 @@ const buildNarrative = ({
   )}% efficiency, keeping hospital load in the ${loadLabel} range. Adjust doses to ease pressure on high-growth districts.`
 }
 
+const buildWeeklySeries = ({ cases7d, cases14d, seed }) => {
+  if (!cases7d || cases7d <= 0) {
+    return Array.from({ length: MAX_WEEKS }, () => 0)
+  }
+  const average14d = cases14d && cases14d > 0 ? cases14d / 2 : cases7d
+  const ratio = average14d / Math.max(cases7d, 1)
+  const weeklyGrowth = clamp(ratio - 1, -0.15, 0.25)
+  const rng = createRng(hashString(seed || 'series'))
+
+  const scaleAt = (week) => 0.7 + 0.9 / (1 + Math.exp(-0.12 * (week - 26)))
+  const baseScale = scaleAt(1)
+
+  return Array.from({ length: MAX_WEEKS }, (_, index) => {
+    const week = index + 1
+    const scale = scaleAt(week) / baseScale
+    const trend = 1 + weeklyGrowth * (week - 1) / 10
+    const jitter = 1 + (rng() - 0.5) * 0.06
+    return Math.max(0, cases7d * scale * trend * jitter)
+  })
+}
+
 function useSimulation() {
   const [selectedDistricts, setSelectedDistricts] = useState(() => {
     const defaults = DEFAULT_DISTRICTS.map(getDistrictByName).filter(Boolean)
@@ -235,6 +248,8 @@ function useSimulation() {
   const [currentWeek, setCurrentWeek] = useState(12)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(PLAYBACK_SPEEDS[0])
+  const [modelResults, setModelResults] = useState({})
+  const [apiStatus, setApiStatus] = useState({ state: 'idle', error: null })
 
   const addDistrict = useCallback((value) => {
     const district = typeof value === 'string' ? getDistrictByName(value) : value
@@ -268,6 +283,72 @@ function useSimulation() {
   }, [selectedDistricts])
 
   useEffect(() => {
+    if (selectedDistricts.length === 0) {
+      setModelResults({})
+      return undefined
+    }
+
+    let isActive = true
+    const controller = new AbortController()
+    const timeoutId = setTimeout(async () => {
+      setApiStatus({ state: 'loading', error: null })
+      const requests = selectedDistricts.map((district) => {
+        const allocation = vaccineAllocations[district.name] ?? 0
+        const coverage = TOTAL_VACCINES
+          ? clamp((allocation / TOTAL_VACCINES) * 100, 0, 100)
+          : 0
+        return fetch(`${API_BASE}/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            district: district.name,
+            coverage_children_pct: coverage,
+            coverage_population_pct: coverage,
+            include_daily: true,
+            include_hourly: false,
+          }),
+          signal: controller.signal,
+        }).then(async (response) => {
+          if (!response.ok) {
+            const message = await response.text()
+            throw new Error(message || response.statusText)
+          }
+          return response.json()
+        })
+      })
+
+      const settled = await Promise.allSettled(requests)
+      if (!isActive) return
+
+      const next = {}
+      let error = null
+      settled.forEach((result, index) => {
+        const name = selectedDistricts[index].name
+        if (result.status === 'fulfilled') {
+          next[name] = result.value
+        } else {
+          error = error || result.reason?.message || 'Prediction failed'
+        }
+      })
+
+      setModelResults((prev) => {
+        const merged = {}
+        selectedDistricts.forEach((district) => {
+          merged[district.name] = next[district.name] ?? prev[district.name]
+        })
+        return merged
+      })
+      setApiStatus({ state: error ? 'error' : 'ready', error })
+    }, 300)
+
+    return () => {
+      isActive = false
+      clearTimeout(timeoutId)
+      controller.abort()
+    }
+  }, [selectedDistricts, vaccineAllocations])
+
+  useEffect(() => {
     if (!isPlaying) return undefined
     const interval = 1000 / playbackSpeed
     const id = setInterval(() => {
@@ -297,96 +378,137 @@ function useSimulation() {
     [selectedDistricts],
   )
 
-  const predictions = useMemo(() => {
-    if (selectedDistricts.length === 0) {
-      return {
-        totalCases: 0,
-        growthRate: 0,
-        vaccineEfficiency: 0,
-        mortalityReduction: 0,
-        hospitalLoad: 0,
-        riskIndex: 0,
-        byDistrict: {},
-      }
-    }
-
-    const byDistrict = {}
-    let totalCases = 0
-    let totalHospitalLoad = 0
-    let totalRisk = 0
-    let baseRateSum = 0
-    let adjustedRateSum = 0
-
+  const weeklySeriesByDistrict = useMemo(() => {
+    const series = {}
     selectedDistricts.forEach((district) => {
-      const vaccines = vaccineAllocations[district.name] ?? 0
-      const cases = computeCases({ district, week: currentWeek, vaccines })
-      const vaccineShare = vaccines / TOTAL_VACCINES
-      const vaccineShield = 0.18 + vaccineShare * 0.62
-      const adjustedRate = district.baseInfectionRate * (1 - vaccineShield)
-      const activeCases = cases * (0.12 + district.baseInfectionRate * 2)
-      const capacity = district.population * district.healthcareCapacity * 0.015
-      const hospitalLoad = clamp((activeCases / capacity) * 100, 0, 100)
-      const riskIndex = clamp(
-        hospitalLoad * 0.6 + adjustedRate * 1200 + (1 - district.healthcareCapacity) * 20,
+      const result = modelResults[district.name]
+      const scenario = result?.scenario ?? result?.baseline
+      if (!scenario) return
+      const cases7d = scenario.cases_7d ?? 0
+      const cases14d = scenario.cases_14d ?? 0
+      series[district.name] = buildWeeklySeries({
+        cases7d,
+        cases14d,
+        seed: district.name,
+      })
+    })
+    return series
+  }, [selectedDistricts, modelResults])
+
+  const getCasesForWeek = useCallback(
+    (districtName, week) => {
+      const series = weeklySeriesByDistrict[districtName]
+      if (series && series.length >= week) return series[week - 1]
+      const fallback = modelResults[districtName]?.scenario
+      return fallback?.cases_7d ?? 0
+    },
+    [weeklySeriesByDistrict, modelResults],
+  )
+
+  const predictions = useMemo(() => {
+      if (selectedDistricts.length === 0) {
+        return {
+          totalCases: 0,
+          growthRate: 0,
+          vaccineEfficiency: 0,
+          mortalityReduction: 0,
+          hospitalLoad: 0,
+          riskIndex: 0,
+          byDistrict: {},
+        }
+      }
+
+      const byDistrict = {}
+      let totalCases = 0
+      let totalHospitalLoad = 0
+      let totalRisk = 0
+      let baseRateSum = 0
+      let adjustedRateSum = 0
+      let baselineTotal = 0
+      let scenarioTotal = 0
+
+      selectedDistricts.forEach((district) => {
+        const vaccines = vaccineAllocations[district.name] ?? 0
+        const cases = getCasesForWeek(district.name, currentWeek)
+        const vaccineShare = vaccines / TOTAL_VACCINES
+        const vaccineShield = 0.18 + vaccineShare * 0.62
+        const adjustedRate = district.baseInfectionRate * (1 - vaccineShield)
+        const activeCases = cases * (0.12 + district.baseInfectionRate * 2)
+        const capacity = district.population * district.healthcareCapacity * 0.015
+        const hospitalLoad = clamp((activeCases / capacity) * 100, 0, 100)
+        const riskIndex = clamp(
+          hospitalLoad * 0.6 + adjustedRate * 1200 + (1 - district.healthcareCapacity) * 20,
+          0,
+          100,
+        )
+        const intensity = clamp(cases / (district.population * 0.085), 0.1, 1)
+
+        const result = modelResults[district.name]
+        const baselineCases = result?.baseline?.cases_7d ?? 0
+        const scenarioCases = result?.scenario?.cases_7d ?? baselineCases
+        baselineTotal += baselineCases
+        scenarioTotal += scenarioCases
+
+        byDistrict[district.name] = {
+          cases,
+          activeCases,
+          hospitalLoad,
+          riskIndex,
+          intensity,
+          vaccineShare,
+          adjustedRate,
+          population: district.population,
+        }
+
+        totalCases += cases
+        totalHospitalLoad += hospitalLoad
+        totalRisk += riskIndex
+        baseRateSum += district.baseInfectionRate
+        adjustedRateSum += adjustedRate
+      })
+
+      const previousWeek = Math.max(1, currentWeek - 1)
+      const previousCases = selectedDistricts.reduce((sum, district) => {
+        return sum + getCasesForWeek(district.name, previousWeek)
+      }, 0)
+      const growthRate = previousCases
+        ? ((totalCases - previousCases) / previousCases) * 100
+        : 0
+
+      const vaccineEfficiency = baselineTotal
+        ? clamp((1 - scenarioTotal / baselineTotal) * 100, 0, 100)
+        : clamp((1 - adjustedRateSum / baseRateSum) * 100, 0, 100)
+      const hospitalLoad = totalHospitalLoad / selectedDistricts.length
+      const riskIndex = totalRisk / selectedDistricts.length
+      const mortalityReduction = clamp(
+        vaccineEfficiency * 0.65 + (100 - hospitalLoad) * 0.12,
         0,
         100,
       )
-      const intensity = clamp(cases / (district.population * 0.085), 0.1, 1)
 
-      byDistrict[district.name] = {
-        cases,
-        activeCases,
+      return {
+        totalCases,
+        growthRate,
+        vaccineEfficiency,
+        mortalityReduction,
         hospitalLoad,
         riskIndex,
-        intensity,
-        vaccineShare,
-        adjustedRate,
-        population: district.population,
+        byDistrict,
       }
-
-      totalCases += cases
-      totalHospitalLoad += hospitalLoad
-      totalRisk += riskIndex
-      baseRateSum += district.baseInfectionRate
-      adjustedRateSum += adjustedRate
-    })
-
-    const previousWeek = Math.max(1, currentWeek - 1)
-    const previousCases = selectedDistricts.reduce((sum, district) => {
-      const vaccines = vaccineAllocations[district.name] ?? 0
-      return sum + computeCases({ district, week: previousWeek, vaccines })
-    }, 0)
-    const growthRate = previousCases
-      ? ((totalCases - previousCases) / previousCases) * 100
-      : 0
-
-    const vaccineEfficiency = clamp(
-      (1 - adjustedRateSum / baseRateSum) * 100,
-      0,
-      100,
-    )
-    const hospitalLoad = totalHospitalLoad / selectedDistricts.length
-    const riskIndex = totalRisk / selectedDistricts.length
-    const mortalityReduction = clamp(vaccineEfficiency * 0.65 + (100 - hospitalLoad) * 0.12, 0, 100)
-
-    return {
-      totalCases,
-      growthRate,
-      vaccineEfficiency,
-      mortalityReduction,
-      hospitalLoad,
-      riskIndex,
-      byDistrict,
-    }
-  }, [selectedDistricts, vaccineAllocations, currentWeek])
+    }, [
+      selectedDistricts,
+      vaccineAllocations,
+      currentWeek,
+      modelResults,
+      getCasesForWeek,
+    ])
 
   const infectionData = useMemo(() => {
     if (selectedDistricts.length === 0) return []
     const data = []
     for (let week = 1; week <= MAX_WEEKS; week += 1) {
       const total = selectedDistricts.reduce((sum, district) => {
-        const vaccines = vaccineAllocations[district.name] ?? 0
-        return sum + computeCases({ district, week, vaccines })
+        return sum + getCasesForWeek(district.name, week)
       }, 0)
       const previous = week > 1 ? data[data.length - 1].cases : total
       const growth = previous ? ((total - previous) / previous) * 100 : 0
@@ -394,7 +516,7 @@ function useSimulation() {
       data.push({ week, cases: total, growth, acceleration })
     }
     return data
-  }, [selectedDistricts, vaccineAllocations])
+  }, [selectedDistricts, getCasesForWeek])
 
   const districtComparison = useMemo(() => {
     return selectedDistricts.map((district) => ({
@@ -406,9 +528,11 @@ function useSimulation() {
 
   const vaccineData = useMemo(() => {
     return selectedDistricts.map((district) => {
-      const metrics = predictions.byDistrict[district.name]
-      const efficiency = metrics
-        ? clamp((1 - metrics.adjustedRate / district.baseInfectionRate) * 100, 0, 100)
+      const baselineCases = modelResults[district.name]?.baseline?.cases_7d
+      const scenarioCases =
+        modelResults[district.name]?.scenario?.cases_7d ?? baselineCases
+      const efficiency = baselineCases
+        ? clamp((1 - scenarioCases / baselineCases) * 100, 0, 100)
         : 0
       return {
         name: district.name,
@@ -416,7 +540,7 @@ function useSimulation() {
         vaccines: vaccineAllocations[district.name] ?? 0,
       }
     })
-  }, [selectedDistricts, predictions.byDistrict, vaccineAllocations])
+  }, [selectedDistricts, modelResults, vaccineAllocations])
 
   const aiNarrative = useMemo(() => {
     if (selectedDistricts.length === 0) return ''
@@ -479,6 +603,7 @@ function useSimulation() {
     aiNarrative,
     districtInfectionPoints,
     resolveDistrictName,
+    apiStatus,
   }
 }
 
