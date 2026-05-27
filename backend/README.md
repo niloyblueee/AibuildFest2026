@@ -4,24 +4,31 @@ This backend trains a simple tabular ML model on the synthetic dataset and serve
 
 ## Quick start
 
-1) Create and activate a virtual environment
+Teammate Run Steps (after clone)
+Backend
 
-- Windows PowerShell:
-  - cd F:\AibuildFest2026\backend
-  - python -m venv .venv
-  - .\.venv\Scripts\Activate.ps1
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-2) Install dependencies
+(copy paste .env in backend)
 
-- pip install -r requirements.txt
+python train.py
+uvicorn app.main:app --reload --port 8000
 
-3) Train the model
 
-- python train.py
 
-4) Run the API
 
-- uvicorn app.main:app --reload --port 8000
+Frontend
+
+cd frontend
+npm install
+
+(Optional) set API base:
+setx VITE_API_BASE http://127.0.0.1:8000
+
+npm run dev
 
 ## Environment variables
 
