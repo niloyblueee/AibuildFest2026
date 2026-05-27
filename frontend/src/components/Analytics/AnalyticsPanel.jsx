@@ -4,30 +4,38 @@ import AIInsights from './AIInsights.jsx'
 import StatCharts from './StatCharts.jsx'
 import './AnalyticsPanel.css'
 
+import ScenarioSelector from './ScenarioSelector.jsx'
+
 function AnalyticsPanel({
   selectedDistricts,
   vaccineAllocations,
   setVaccineAllocation,
-  totalVaccines,
+  scenarioName,
+  setScenarioName,
+  apiStatus,
   predictions,
   infectionData,
   vaccineData,
   districtComparison,
   spreadAcceleration,
   aiNarrative,
+  signals,
 }) {
   return (
     <div className="analytics-panel">
       <section className="panel-section">
         <div className="section-header">
-          <h2>Vaccine Allocation</h2>
-          <p>Distribute {totalVaccines.toLocaleString()} doses across districts.</p>
+          <h2>Scenario & Vaccination</h2>
+          <p>Switch scenarios and adjust district coverage.</p>
+          {apiStatus.state === 'loading' && <span style={{ color: 'var(--blue-medical)', fontSize: '12px' }}>Loading prediction...</span>}
+          {apiStatus.state === 'error' && <span style={{ color: 'var(--red-accent)', fontSize: '12px' }}>API Error: {apiStatus.error}</span>}
         </div>
+        <ScenarioSelector scenarioName={scenarioName} setScenarioName={setScenarioName} />
         <VaccineSliders
           selectedDistricts={selectedDistricts}
           vaccineAllocations={vaccineAllocations}
           setVaccineAllocation={setVaccineAllocation}
-          totalVaccines={totalVaccines}
+          predictions={predictions}
         />
       </section>
 
@@ -39,6 +47,7 @@ function AnalyticsPanel({
         <PredictionCards
           predictions={predictions}
           infectionData={infectionData}
+          signals={signals}
         />
       </section>
 
@@ -47,7 +56,7 @@ function AnalyticsPanel({
           <h2>AI Insights</h2>
           <p>Clinical guidance generated from current simulation state.</p>
         </div>
-        <AIInsights aiNarrative={aiNarrative} />
+        <AIInsights aiNarrative={aiNarrative} predictions={predictions} />
       </section>
 
       <section className="panel-section">

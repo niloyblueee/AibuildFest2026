@@ -34,7 +34,7 @@ npm run dev
 
 Set these in your shell or in a .env file:
 
-- DATA_PATH=..\frontend\src\data\zerodose_mission_control_synthetic_dataset.csv
+- DATA_PATH=data\bd64_measles_training_news_bootstrap_2026-05-27.csv
 - MODEL_PATH=models\measles_model.joblib
 - META_PATH=models\measles_model_meta.json
 - OPENAI_API_KEY=your_key_here

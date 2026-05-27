@@ -4,7 +4,7 @@ import DISTRICTS, {
   DEFAULT_DISTRICTS,
   MAX_WEEKS,
   PLAYBACK_SPEEDS,
-  TOTAL_VACCINES,
+  DEFAULT_COVERAGE_PCT,
 } from '../data/districtData'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
@@ -21,13 +21,22 @@ const DISTRICT_ALIASES = {
   coxsbazar: "Cox's Bazar",
 }
 
-const MAX_POINTS_PER_DISTRICT = 5000
+const MAX_POINTS_PER_DISTRICT = 1200
 
 const normalizeName = (value) =>
   value
     .toLowerCase()
     .replace(/[^a-z]/g, '')
     .trim()
+
+const API_NAME_OVERRIDES = {
+  barisal: 'Barishal',
+  bogra: 'Bogura',
+  chittagong: 'Chattogram',
+  comilla: 'Cumilla',
+  jessore: 'Jashore',
+  coxsbazar: 'Coxs Bazar',
+}
 
 const resolveDistrictName = (name) => {
   if (!name) return ''
@@ -40,17 +49,20 @@ const resolveDistrictName = (name) => {
   return match?.name ?? name
 }
 
+const toApiDistrictName = (name) => {
+  if (!name) return ''
+  const normalized = normalizeName(name)
+  return API_NAME_OVERRIDES[normalized] ?? name
+}
+
 const getDistrictByName = (name) => {
   const resolved = resolveDistrictName(name)
   return DISTRICTS.find((district) => district.name === resolved) || null
 }
 
-const allocateEvenly = (names) => {
-  if (names.length === 0) return {}
-  const base = Math.floor(TOTAL_VACCINES / names.length)
-  const remainder = TOTAL_VACCINES - base * names.length
-  return names.reduce((acc, name, index) => {
-    acc[name] = base + (index < remainder ? 1 : 0)
+const initializeCoverage = (names, pct = DEFAULT_COVERAGE_PCT) => {
+  return names.reduce((acc, name) => {
+    acc[name] = pct
     return acc
   }, {})
 }
@@ -238,18 +250,44 @@ const buildWeeklySeries = ({ cases7d, cases14d, seed }) => {
 }
 
 function useSimulation() {
+  const [availableDistricts, setAvailableDistricts] = useState(DISTRICTS)
   const [selectedDistricts, setSelectedDistricts] = useState(() => {
     const defaults = DEFAULT_DISTRICTS.map(getDistrictByName).filter(Boolean)
     return defaults.length > 0 ? defaults : DISTRICTS.slice(0, 2)
   })
+  const [scenarioName, setScenarioName] = useState('observed_baseline')
   const [vaccineAllocations, setVaccineAllocations] = useState(() =>
-    allocateEvenly(selectedDistricts.map((district) => district.name)),
+    initializeCoverage(selectedDistricts.map((district) => district.name), DEFAULT_COVERAGE_PCT),
   )
   const [currentWeek, setCurrentWeek] = useState(12)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(PLAYBACK_SPEEDS[0])
   const [modelResults, setModelResults] = useState({})
   const [apiStatus, setApiStatus] = useState({ state: 'idle', error: null })
+
+  useEffect(() => {
+    fetch(`${API_BASE}/districts`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.districts && data.districts.length > 0) {
+          // Map backend data format to frontend expectations
+          const mapped = data.districts.map(d => ({
+            name: d.name,
+            division: d.division,
+            population: d.population,
+            riskClass: d.risk_class,
+            newsEnrichedRiskScore: d.news_enriched_risk_score,
+            lat: getDistrictByName(d.name)?.lat || 23.8, // Fallback to existing
+            lng: getDistrictByName(d.name)?.lng || 90.4,
+            baseInfectionRate: 0.04,
+            healthcareCapacity: 0.5
+          }))
+          setAvailableDistricts(mapped)
+        }
+      })
+      .catch(console.error)
+  }, [])
+
 
   const addDistrict = useCallback((value) => {
     const district = typeof value === 'string' ? getDistrictByName(value) : value
@@ -271,16 +309,7 @@ function useSimulation() {
     setIsPlaying((prev) => !prev)
   }, [])
 
-  useEffect(() => {
-    setVaccineAllocations((prev) => {
-      const names = selectedDistricts.map((district) => district.name)
-      if (names.length === 0) return {}
-      return names.reduce((acc, name) => {
-        acc[name] = clamp(prev[name] ?? 0, 0, TOTAL_VACCINES)
-        return acc
-      }, {})
-    })
-  }, [selectedDistricts])
+
 
   useEffect(() => {
     if (selectedDistricts.length === 0) {
@@ -292,53 +321,57 @@ function useSimulation() {
     const controller = new AbortController()
     const timeoutId = setTimeout(async () => {
       setApiStatus({ state: 'loading', error: null })
-      const requests = selectedDistricts.map((district) => {
-        const allocation = vaccineAllocations[district.name] ?? 0
-        const coverage = TOTAL_VACCINES
-          ? clamp((allocation / TOTAL_VACCINES) * 100, 0, 100)
-          : 0
-        return fetch(`${API_BASE}/predict`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            district: district.name,
-            coverage_children_pct: coverage,
-            coverage_population_pct: coverage,
+      try {
+        const requests = selectedDistricts.map((district) => {
+          const allocation = vaccineAllocations[district.name] ?? 0
+          const childEstimate = district.population
+            ? district.population * 0.12
+            : 1
+          const coverage = clamp((allocation / childEstimate) * 100, 0, 100)
+          return {
+            district: toApiDistrictName(district.name),
+            scenario_name: scenarioName,
+            coverage_children_pct: allocation,
+            coverage_population_pct: allocation,
             include_daily: true,
             include_hourly: false,
-          }),
-          signal: controller.signal,
-        }).then(async (response) => {
-          if (!response.ok) {
-            const message = await response.text()
-            throw new Error(message || response.statusText)
           }
-          return response.json()
         })
-      })
 
-      const settled = await Promise.allSettled(requests)
-      if (!isActive) return
+        const response = await fetch(`${API_BASE}/batch-predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests }),
+          signal: controller.signal,
+        })
 
-      const next = {}
-      let error = null
-      settled.forEach((result, index) => {
-        const name = selectedDistricts[index].name
-        if (result.status === 'fulfilled') {
-          next[name] = result.value
-        } else {
-          error = error || result.reason?.message || 'Prediction failed'
+        if (!response.ok) {
+          const message = await response.text()
+          throw new Error(message || response.statusText)
         }
-      })
 
-      setModelResults((prev) => {
-        const merged = {}
-        selectedDistricts.forEach((district) => {
-          merged[district.name] = next[district.name] ?? prev[district.name]
+        const data = await response.json()
+        if (!isActive) return
+
+        const next = {}
+        const results = data?.results ?? []
+        results.forEach((result) => {
+          const resolved = resolveDistrictName(result.district)
+          if (resolved) next[resolved] = result
         })
-        return merged
-      })
-      setApiStatus({ state: error ? 'error' : 'ready', error })
+
+        setModelResults((prev) => {
+          const merged = {}
+          selectedDistricts.forEach((district) => {
+            merged[district.name] = next[district.name] ?? prev[district.name]
+          })
+          return merged
+        })
+        setApiStatus({ state: 'ready', error: null })
+      } catch (err) {
+        if (!isActive) return
+        setApiStatus({ state: 'error', error: err?.message || 'Prediction failed' })
+      }
     }, 300)
 
     return () => {
@@ -346,7 +379,7 @@ function useSimulation() {
       clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [selectedDistricts, vaccineAllocations])
+  }, [selectedDistricts, vaccineAllocations, scenarioName])
 
   useEffect(() => {
     if (!isPlaying) return undefined
@@ -359,23 +392,12 @@ function useSimulation() {
 
   const setVaccineAllocation = useCallback(
     (name, value) => {
-      setVaccineAllocations((prev) => {
-        const names = selectedDistricts.map((district) => district.name)
-        if (!names.includes(name)) return prev
-        const next = { ...prev }
-        names.forEach((districtName) => {
-          if (!(districtName in next)) next[districtName] = 0
-        })
-        const othersTotal = names.reduce((sum, districtName) => {
-          if (districtName === name) return sum
-          return sum + (next[districtName] ?? 0)
-        }, 0)
-        const maxAllowed = Math.max(0, TOTAL_VACCINES - othersTotal)
-        next[name] = clamp(Math.round(value), 0, maxAllowed)
-        return next
-      })
+      setVaccineAllocations((prev) => ({
+        ...prev,
+        [name]: clamp(Math.round(value), 0, 100)
+      }))
     },
-    [selectedDistricts],
+    [],
   )
 
   const weeklySeriesByDistrict = useMemo(() => {
@@ -420,6 +442,8 @@ function useSimulation() {
 
     const byDistrict = {}
     let totalCases = 0
+    let totalConfirmed = 0
+    let totalDeaths = 0
     let totalHospitalLoad = 0
     let totalRisk = 0
     let baseRateSum = 0
@@ -430,7 +454,7 @@ function useSimulation() {
     selectedDistricts.forEach((district) => {
       const vaccines = vaccineAllocations[district.name] ?? 0
       const cases = getCasesForWeek(district.name, currentWeek)
-      const vaccineShare = vaccines / TOTAL_VACCINES
+      const vaccineShare = vaccines / 100
       const vaccineShield = 0.18 + vaccineShare * 0.62
       const adjustedRate = district.baseInfectionRate * (1 - vaccineShield)
       const activeCases = cases * (0.12 + district.baseInfectionRate * 2)
@@ -446,6 +470,7 @@ function useSimulation() {
       const result = modelResults[district.name]
       const baselineCases = result?.baseline?.cases_7d ?? 0
       const scenarioCases = result?.scenario?.cases_7d ?? baselineCases
+      const casesAverted = baselineCases - scenarioCases
       baselineTotal += baselineCases
       scenarioTotal += scenarioCases
 
@@ -458,9 +483,13 @@ function useSimulation() {
         vaccineShare,
         adjustedRate,
         population: district.population,
+        baselineCases,
+        casesAverted
       }
 
       totalCases += cases
+      totalConfirmed += result?.scenario?.confirmed_7d ?? (result?.baseline?.confirmed_7d ?? 0)
+      totalDeaths += result?.scenario?.deaths_7d ?? (result?.baseline?.deaths_7d ?? 0)
       totalHospitalLoad += hospitalLoad
       totalRisk += riskIndex
       baseRateSum += district.baseInfectionRate
@@ -488,6 +517,8 @@ function useSimulation() {
 
     return {
       totalCases,
+      totalConfirmed,
+      totalDeaths,
       growthRate,
       vaccineEfficiency,
       mortalityReduction,
@@ -564,8 +595,8 @@ function useSimulation() {
       const metrics = predictions.byDistrict[district.name]
       const intensity = metrics?.intensity ?? 0.2
       const vaccines = vaccineAllocations[district.name] ?? 0
-      const vaccineShare = vaccines / TOTAL_VACCINES
-      const baseCount = 5000
+      const vaccineShare = clamp(vaccines / 100, 0, 1)
+      const baseCount = MAX_POINTS_PER_DISTRICT
       const count = Math.round(
         clamp(baseCount * (1 - vaccineShare), 0, MAX_POINTS_PER_DISTRICT),
       )
@@ -579,13 +610,44 @@ function useSimulation() {
     })
   }, [selectedDistricts, predictions.byDistrict, vaccineAllocations])
 
+  const signals = useMemo(() => {
+    if (selectedDistricts.length === 0) {
+      return {
+        rtEstimate: 0,
+        testPositivityRate: 0,
+        zeroDoseRiskScore: 0,
+        stockoutRiskScore: 0,
+      }
+    }
+    const rows = selectedDistricts
+      .map((district) => modelResults[district.name]?.signals)
+      .filter(Boolean)
+
+    const average = (key) => {
+      const values = rows
+        .map((row) => Number(row?.[key]))
+        .filter((value) => Number.isFinite(value))
+      if (values.length === 0) return 0
+      return values.reduce((sum, value) => sum + value, 0) / values.length
+    }
+
+    return {
+      rtEstimate: average('rt_estimate'),
+      testPositivityRate: average('test_positivity_rate'),
+      zeroDoseRiskScore: average('zero_dose_risk_score'),
+      stockoutRiskScore: average('stockout_risk_score'),
+    }
+  }, [selectedDistricts, modelResults])
+
   return {
     selectedDistricts,
     addDistrict,
     removeDistrict,
     vaccineAllocations,
     setVaccineAllocation,
-    totalVaccines: TOTAL_VACCINES,
+    setScenarioName,
+    scenarioName,
+    availableDistricts,
     currentWeek,
     setCurrentWeek,
     isPlaying,
@@ -603,6 +665,7 @@ function useSimulation() {
     aiNarrative,
     districtInfectionPoints,
     resolveDistrictName,
+    signals,
     apiStatus,
   }
 }

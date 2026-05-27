@@ -23,7 +23,7 @@ Step 1 - Environment setup
    - pip install -r requirements.txt
 3) Create a .env file (optional) for local settings.
    - Example variables:
-     - DATA_PATH=..\frontend\src\data\zerodose_mission_control_synthetic_dataset.csv
+   - DATA_PATH=data\bd64_measles_training_news_bootstrap_2026-05-27.csv
      - MODEL_PATH=models\measles_model.joblib
      - META_PATH=models\measles_model_meta.json
      - OPENAI_API_KEY=your_key_here

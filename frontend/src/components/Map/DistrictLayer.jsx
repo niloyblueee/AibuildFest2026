@@ -21,7 +21,11 @@ const normalizeName = (value) =>
     .replace(/[^a-z]/g, '')
     .trim()
 
-const getFillColor = (intensity) => {
+const getFillColor = (riskClass, intensity) => {
+  if (riskClass === 'High') return '#ff6b6b'
+  if (riskClass === 'Medium') return '#ffa8a8'
+  if (riskClass === 'Low') return '#ffe3e3'
+
   if (intensity > 0.85) return '#ff6b6b'
   if (intensity > 0.7) return '#ff8787'
   if (intensity > 0.55) return '#ffa8a8'
@@ -37,6 +41,7 @@ function DistrictLayer({
   districtMetrics,
   showBorders,
   resolveDistrictName,
+  availableDistricts,
 }) {
   const selectedSet = new Set(selectedDistricts.map(normalizeName))
 
@@ -47,11 +52,13 @@ function DistrictLayer({
     const isSelected = selectedSet.has(normalized)
     const metrics = districtMetrics?.[resolved]
     const intensity = metrics?.intensity ?? 0.15
+    const distData = availableDistricts?.find((d) => normalizeName(d.name) === normalized)
+    const riskClass = distData?.riskClass
 
     return {
       color: isSelected ? '#1c7ed6' : '#c8d2df',
       weight: showBorders ? (isSelected ? 3 : 1) : 0,
-      fillColor: getFillColor(intensity),
+      fillColor: getFillColor(riskClass, intensity),
       fillOpacity: 0.75,
       opacity: 0.9,
     }
@@ -62,14 +69,24 @@ function DistrictLayer({
     const resolved = resolveDistrictName ? resolveDistrictName(rawName) : rawName
     const metrics = districtMetrics?.[resolved]
     const fallback = DISTRICTS.find((district) => district.name === resolved)
-    const population = metrics?.population ?? fallback?.population
+    const distData = availableDistricts?.find((d) => normalizeName(d.name) === normalizeName(resolved))
+    const population = metrics?.population ?? distData?.population ?? fallback?.population
     const cases = metrics?.cases
+    const riskScore = distData?.newsEnrichedRiskScore
+    const populationLabel = Number.isFinite(population)
+      ? Math.round(population).toLocaleString()
+      : 'N/A'
+    const casesLabel = Number.isFinite(cases)
+      ? Math.round(cases).toLocaleString()
+      : 'N/A'
 
     const popupContent = `
       <div class="map-popup">
         <strong>${resolved || 'Unknown district'}</strong><br />
-        <span>Population: ${population ? population.toLocaleString() : 'N/A'}</span><br />
-        <span>Active cases: ${cases ? Math.round(cases).toLocaleString() : 'N/A'}</span>
+        <span>Population: ${populationLabel}</span><br />
+        <span>Risk Class: ${distData?.riskClass || 'N/A'}</span><br />
+        <span>Risk Score: ${Number.isFinite(riskScore) ? riskScore.toFixed(2) : 'N/A'}</span><br />
+        <span>Active cases: ${casesLabel}</span>
       </div>
     `
 

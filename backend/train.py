@@ -13,41 +13,43 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from dotenv import load_dotenv
-from app.features import add_date_features, normalize_bool_columns
+from app.features import add_date_features, add_derived_features, normalize_bool_columns
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv()
-DATA_PATH = Path(
-    os.getenv(
-        "DATA_PATH",
-        ROOT_DIR / ".." / "frontend" / "src" / "data" / "zerodose_mission_control_synthetic_dataset.csv",
-    )
-).resolve()
-MODEL_PATH = Path(
-    os.getenv("MODEL_PATH", ROOT_DIR / "models" / "measles_model.joblib")
-).resolve()
-META_PATH = Path(
-    os.getenv("META_PATH", ROOT_DIR / "models" / "measles_model_meta.json")
-).resolve()
 
-TARGET_COLS = ["forecast_cases_next_7d", "forecast_cases_next_14d"]
+
+def _resolve_env_path(env_name: str, default_path: Path) -> Path:
+    raw = os.getenv(env_name)
+    if not raw:
+        return default_path.resolve()
+    path = Path(raw)
+    if not path.is_absolute():
+        path = ROOT_DIR / path
+    return path.resolve()
+
+
+DATA_PATH = _resolve_env_path(
+    "DATA_PATH",
+    ROOT_DIR / "data" / "bd64_measles_training_news_bootstrap_2026-05-27.csv",
+)
+MODEL_PATH = _resolve_env_path("MODEL_PATH", ROOT_DIR / "models" / "measles_model.joblib")
+META_PATH = _resolve_env_path("META_PATH", ROOT_DIR / "models" / "measles_model_meta.json")
+
+TARGET_COLS = [
+    "forecast_cases_next_7d",
+    "forecast_cases_next_14d",
+    "forecast_confirmed_next_7d",
+    "forecast_deaths_next_7d",
+]
 DROP_PREFIXES = ("forecast_", "scenario_", "predicted_")
 DROP_COLS = {
     "record_id",
     "date",
-    "route_plan_text",
-    "community_notes",
-    "ai_generated_field_brief",
-    "public_message_template_bn",
-    "alert_flags_json",
-    "model_recommended_action",
-    "dominant_rumor_topic",
-    "suggested_reallocation_from_facility",
-    "suggested_reallocation_to_facility",
-    "nearest_health_facility",
-    "nearest_hospital_name",
-    "facility_id",
-    "nearest_hospital_id",
+    "source_ids",
+    "synthetic_data_flag",
+    "district_estimate_disclaimer",
+    "evidence_level",
 }
 
 
@@ -73,6 +75,7 @@ def select_feature_columns(df: pd.DataFrame) -> list[str]:
 def main():
     df = pd.read_csv(DATA_PATH)
     df = add_date_features(df)
+    df = add_derived_features(df)
     df = normalize_bool_columns(df)
 
     df = df.dropna(subset=TARGET_COLS)
@@ -101,7 +104,7 @@ def main():
     categorical_transformer = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
         ]
     )
 
@@ -113,9 +116,9 @@ def main():
     )
 
     base_model = HistGradientBoostingRegressor(
-        max_depth=6,
+        max_depth=8,
         learning_rate=0.05,
-        max_iter=200,
+        max_iter=400,
         random_state=42,
     )
     model = MultiOutputRegressor(base_model)
@@ -124,8 +127,10 @@ def main():
     pipeline.fit(X_train, y_train)
 
     predictions = pipeline.predict(X_test)
-    mae_7d = mean_absolute_error(y_test[TARGET_COLS[0]], predictions[:, 0])
-    mae_14d = mean_absolute_error(y_test[TARGET_COLS[1]], predictions[:, 1])
+    mae_cases_7d = mean_absolute_error(y_test[TARGET_COLS[0]], predictions[:, 0])
+    mae_cases_14d = mean_absolute_error(y_test[TARGET_COLS[1]], predictions[:, 1])
+    mae_confirmed_7d = mean_absolute_error(y_test[TARGET_COLS[2]], predictions[:, 2])
+    mae_deaths_7d = mean_absolute_error(y_test[TARGET_COLS[3]], predictions[:, 3])
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, MODEL_PATH)
@@ -140,15 +145,22 @@ def main():
         "drop_prefixes": list(DROP_PREFIXES),
         "train_rows": int(len(train_df)),
         "test_rows": int(len(test_df)),
-        "mae": {"cases_7d": float(mae_7d), "cases_14d": float(mae_14d)},
+        "mae": {
+            "cases_7d": float(mae_cases_7d),
+            "cases_14d": float(mae_cases_14d),
+            "confirmed_7d": float(mae_confirmed_7d),
+            "deaths_7d": float(mae_deaths_7d),
+        },
     }
 
     with open(META_PATH, "w", encoding="utf-8") as file_handle:
         json.dump(meta, file_handle, indent=2)
 
     print("Training complete")
-    print(f"MAE 7d: {mae_7d:.2f}")
-    print(f"MAE 14d: {mae_14d:.2f}")
+    print(f"MAE cases 7d: {mae_cases_7d:.2f}")
+    print(f"MAE cases 14d: {mae_cases_14d:.2f}")
+    print(f"MAE confirmed 7d: {mae_confirmed_7d:.2f}")
+    print(f"MAE deaths 7d: {mae_deaths_7d:.2f}")
     print(f"Model saved to: {MODEL_PATH}")
     print(f"Meta saved to: {META_PATH}")
 

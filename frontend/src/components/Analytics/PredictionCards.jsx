@@ -29,7 +29,9 @@ function Sparkline({ data, color }) {
   )
 }
 
-function PredictionCards({ predictions, infectionData }) {
+const normalizeScore = (value) => (value <= 1 ? value * 100 : value)
+
+function PredictionCards({ predictions, infectionData, signals }) {
   const cards = [
     {
       key: 'cases',
@@ -38,6 +40,24 @@ function PredictionCards({ predictions, infectionData }) {
       format: formatCompact,
       trend: predictions.growthRate,
       icon: 'PC',
+      tone: 'red',
+    },
+    {
+      key: 'confirmed',
+      label: 'Confirmed Cases (7d)',
+      value: predictions.totalConfirmed,
+      format: formatCompact,
+      trend: predictions.growthRate,
+      icon: 'CC',
+      tone: 'orange',
+    },
+    {
+      key: 'deaths',
+      label: 'Deaths Forecast (7d)',
+      value: predictions.totalDeaths,
+      format: formatCompact,
+      trend: predictions.growthRate,
+      icon: 'DF',
       tone: 'red',
     },
     {
@@ -86,6 +106,56 @@ function PredictionCards({ predictions, infectionData }) {
       tone: 'red',
     },
   ]
+
+  if (signals) {
+    const rtEstimate = Number(signals.rtEstimate ?? 0)
+    const testPositivity = Number(signals.testPositivityRate ?? 0) * 100
+    const zeroDoseRisk = normalizeScore(
+      Number(signals.zeroDoseRiskScore ?? 0),
+    )
+    const stockoutRisk = normalizeScore(
+      Number(signals.stockoutRiskScore ?? 0),
+    )
+
+    cards.push(
+      {
+        key: 'rt',
+        label: 'Rt Estimate',
+        value: rtEstimate,
+        format: (value) => value.toFixed(2),
+        trend: (rtEstimate - 1) * 100,
+        icon: 'RT',
+        tone: 'orange',
+      },
+      {
+        key: 'positivity',
+        label: 'Test Positivity',
+        value: testPositivity,
+        format: (value) => `${value.toFixed(1)}%`,
+        trend: testPositivity - 5,
+        icon: 'TP',
+        tone: 'red',
+      },
+      {
+        key: 'zero-dose',
+        label: 'Zero-dose Risk',
+        value: zeroDoseRisk,
+        format: (value) => `${value.toFixed(1)}%`,
+        trend: zeroDoseRisk - 50,
+        icon: 'ZD',
+        tone: 'orange',
+      },
+      {
+        key: 'stockout',
+        label: 'Stockout Risk',
+        value: stockoutRisk,
+        format: (value) => `${value.toFixed(1)}%`,
+        trend: stockoutRisk - 50,
+        icon: 'SR',
+        tone: 'blue',
+      },
+    )
+  }
 
   return (
     <div className="prediction-grid">

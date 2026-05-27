@@ -13,6 +13,7 @@ function App() {
         currentWeek={simulation.currentWeek}
         selectedCount={simulation.selectedDistricts.length}
         isPlaying={simulation.isPlaying}
+        apiStatus={simulation.apiStatus}
       />
       <main className="dashboard">
         <section className="map-section">
@@ -29,6 +30,7 @@ function App() {
             districtInfectionPoints={simulation.districtInfectionPoints}
             districtMetrics={simulation.predictions.byDistrict}
             resolveDistrictName={simulation.resolveDistrictName}
+            availableDistricts={simulation.availableDistricts}
           />
         </section>
         <section className="analytics-section">
@@ -36,13 +38,16 @@ function App() {
             selectedDistricts={simulation.selectedDistricts}
             vaccineAllocations={simulation.vaccineAllocations}
             setVaccineAllocation={simulation.setVaccineAllocation}
-            totalVaccines={simulation.totalVaccines}
+            scenarioName={simulation.scenarioName}
+            setScenarioName={simulation.setScenarioName}
+            apiStatus={simulation.apiStatus}
             predictions={simulation.predictions}
             infectionData={simulation.infectionData}
             vaccineData={simulation.vaccineData}
             districtComparison={simulation.districtComparison}
             spreadAcceleration={simulation.spreadAcceleration}
             aiNarrative={simulation.aiNarrative}
+            signals={simulation.signals}
           />
         </section>
       </main>

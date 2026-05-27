@@ -1,4 +1,4 @@
-function Header({ currentWeek, selectedCount, isPlaying }) {
+function Header({ currentWeek, selectedCount, isPlaying, apiStatus }) {
   return (
     <header className="app-header">
       <div className="header-brand">
@@ -9,6 +9,11 @@ function Header({ currentWeek, selectedCount, isPlaying }) {
         </div>
       </div>
       <div className="header-meta">
+        {apiStatus && (
+          <span className={`meta-chip ${apiStatus.state === 'error' ? 'error' : apiStatus.state === 'loading' ? 'loading' : 'ready'}`}>
+            API: {apiStatus.state}
+          </span>
+        )}
         <span className="meta-chip">Week {currentWeek}</span>
         <span className="meta-chip">{selectedCount} districts</span>
         <span className={`meta-pill ${isPlaying ? 'active' : ''}`}>

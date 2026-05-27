@@ -6,23 +6,21 @@ function VaccineSliders({
   selectedDistricts,
   vaccineAllocations,
   setVaccineAllocation,
-  totalVaccines,
+  predictions,
 }) {
   if (selectedDistricts.length === 0) {
     return <p className="empty-state">Select districts to unlock allocation controls.</p>
   }
 
-  const totalAssigned = selectedDistricts.reduce((sum, district) => {
-    return sum + (vaccineAllocations[district.name] ?? 0)
-  }, 0)
-
   return (
     <div className="vaccine-sliders">
       {selectedDistricts.map((district) => {
         const value = vaccineAllocations[district.name] ?? 0
-        const percent = totalVaccines ? (value / totalVaccines) * 100 : 0
-        const othersTotal = totalAssigned - value
-        const maxValue = Math.max(0, totalVaccines - othersTotal)
+        const metrics = predictions?.byDistrict?.[district.name] || {}
+        const baselineCases = metrics.baselineCases ?? 0
+        const casesAverted = metrics.casesAverted ?? 0
+        const currentCases = metrics.cases ?? baselineCases
+
         return (
           <div key={district.name} className="slider-row">
             <div className="slider-header">
@@ -32,26 +30,34 @@ function VaccineSliders({
               </div>
               <div className="slider-value">
                 <AnimatedCounter
-                  value={value}
+                  value={currentCases}
                   format={(val) => formatNumber(val)}
                 />
-                <span> doses</span>
+                <span style={{ fontSize: '12px', color: 'var(--gray-500)', marginLeft: '4px' }}>
+                  predicted cases
+                </span>
               </div>
             </div>
+
             <input
               className="slider"
               type="range"
               min={0}
-              max={maxValue}
+              max={100}
               value={value}
               onChange={(event) =>
                 setVaccineAllocation(district.name, Number(event.target.value))
               }
-              aria-label={`${district.name} allocation`}
+              aria-label={`${district.name} coverage percentage`}
             />
+
             <div className="slider-footer">
-              <span>{percent.toFixed(1)}%</span>
-              <span>{totalVaccines.toLocaleString()} total</span>
+              <span style={{ fontWeight: 'bold', color: 'var(--blue-dark)' }}>
+                Coverage: {value}%
+              </span>
+              <span style={{ color: casesAverted > 0 ? 'var(--green-success)' : 'var(--gray-500)' }}>
+                {casesAverted > 0 ? `-${formatNumber(casesAverted)} cases averted` : 'No cases averted'}
+              </span>
             </div>
           </div>
         )

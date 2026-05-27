@@ -18,6 +18,17 @@ def add_date_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "suspected_cases_today_sim" in df.columns and "population" in df.columns:
+        df["cases_per_100k"] = (
+            df["suspected_cases_today_sim"] / df["population"]
+        ) * 100000
+    if "current_campaign_coverage_scenario" in df.columns:
+        df["coverage_gap"] = 0.95 - df["current_campaign_coverage_scenario"]
+    return df
+
+
 def normalize_bool_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in df.columns:
