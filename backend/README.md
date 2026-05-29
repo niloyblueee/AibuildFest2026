@@ -12,10 +12,10 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-(copy paste .env in backend)
+(copy paste .env in backend) line 33 :)
 
 python train.py
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 #do cd backend first
 
 
 
