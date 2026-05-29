@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
-
-const API_BASE = import.meta.env.VITE_API_BASE
+import { API_BASE_ERROR, getApiBase } from '../../lib/apiBase'
 
 function ScenarioSelector({ scenarioName, setScenarioName }) {
   const [scenarios, setScenarios] = useState([])
 
   useEffect(() => {
-    fetch(`${API_BASE}/scenarios`)
+    const baseUrl = getApiBase()
+    if (!baseUrl) {
+      console.error(API_BASE_ERROR)
+      return
+    }
+    fetch(`${baseUrl}/scenarios`)
       .then(res => res.json())
       .then(data => {
         if (data.scenarios) {

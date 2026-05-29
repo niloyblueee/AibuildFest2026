@@ -6,21 +6,7 @@ import DISTRICTS, {
   PLAYBACK_SPEEDS,
   DEFAULT_COVERAGE_PCT,
 } from '../data/districtData'
-
-const API_BASE = import.meta.env.VITE_API_BASE
-const API_BASE_ERROR =
-  'Missing VITE_API_BASE. Set it in the frontend .env file and restart the dev server.'
-const API_BASE_VALUE = typeof API_BASE === 'string' ? API_BASE.trim() : ''
-let apiBaseMissingLogged = false
-
-const ensureApiBase = () => {
-  if (API_BASE_VALUE) return API_BASE_VALUE
-  if (!apiBaseMissingLogged) {
-    apiBaseMissingLogged = true
-    console.error(API_BASE_ERROR)
-  }
-  return null
-}
+import { API_BASE_ERROR, getApiBase } from '../lib/apiBase'
 
 const DISTRICT_ALIASES = {
   barishal: 'Barisal',
@@ -285,7 +271,7 @@ function useSimulation() {
   }, [totalVaccineInStore, vaccineAllocations])
 
   useEffect(() => {
-    const baseUrl = ensureApiBase()
+    const baseUrl = getApiBase()
     if (!baseUrl) {
       setApiStatus({ state: 'error', error: API_BASE_ERROR })
       return
@@ -344,7 +330,7 @@ function useSimulation() {
     let isActive = true
     const controller = new AbortController()
     const timeoutId = setTimeout(async () => {
-      const baseUrl = ensureApiBase()
+      const baseUrl = getApiBase()
       if (!baseUrl) {
         setApiStatus({ state: 'error', error: API_BASE_ERROR })
         return
