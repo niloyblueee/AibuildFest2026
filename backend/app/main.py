@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import pandas as pd
-from .config import OPENAI_API_KEY
+from .config import OPENAI_API_KEY, CORS_ALLOW_CREDENTIALS, CORS_ORIGINS
 from .curves import build_daily_curve, build_hourly_curve, seed_from_parts
 from .data_loader import get_dataset
 from .features import apply_feature_overrides, normalize_bool_columns
@@ -11,10 +11,14 @@ from .scenarios import apply_builtin_scenario, apply_coverage_scenario
 from .schemas import BatchPredictRequest, InsightRequest, PredictRequest
 
 app = FastAPI(title="Measles Forecast API", version="0.1.0")
+allow_credentials = CORS_ALLOW_CREDENTIALS
+if "*" in CORS_ORIGINS:
+    allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
