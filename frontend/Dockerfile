@@ -4,6 +4,9 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
+ARG VITE_API_BASE
+ENV VITE_API_BASE=$VITE_API_BASE
+
 COPY frontend/package*.json ./
 # Ensure devDependencies (e.g., vite) are installed for the build
 ENV NPM_CONFIG_PRODUCTION=false
