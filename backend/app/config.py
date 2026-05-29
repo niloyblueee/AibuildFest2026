@@ -24,7 +24,8 @@ def _resolve_env_path(env_name: str, default_path: Path) -> Path:
     raw = os.getenv(env_name)
     if not raw:
       return default_path.resolve()
-    path = Path(raw)
+        normalized = raw.strip().strip('"').strip("'").replace("\\", "/")
+        path = Path(normalized)
     if not path.is_absolute():
         path = ROOT_DIR / path
     return path.resolve()
