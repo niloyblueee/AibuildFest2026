@@ -12,6 +12,9 @@ RUN pip install --upgrade pip \
 
 COPY backend/ .
 
+# Generate model artifacts at build time so they exist in the image
+RUN python train.py
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
