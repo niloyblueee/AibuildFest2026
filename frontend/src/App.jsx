@@ -38,6 +38,9 @@ function App() {
             selectedDistricts={simulation.selectedDistricts}
             vaccineAllocations={simulation.vaccineAllocations}
             setVaccineAllocation={simulation.setVaccineAllocation}
+            totalVaccineInStore={simulation.totalVaccineInStore}
+            setTotalVaccineInStore={simulation.setTotalVaccineInStore}
+            remainingVaccine={simulation.remainingVaccine}
             scenarioName={simulation.scenarioName}
             setScenarioName={simulation.setScenarioName}
             apiStatus={simulation.apiStatus}

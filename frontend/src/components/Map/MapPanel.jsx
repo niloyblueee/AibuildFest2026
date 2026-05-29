@@ -74,20 +74,6 @@ function MapPanel({
         onAddDistrict={addDistrict}
         onRemoveDistrict={removeDistrict}
       />
-      <div style={{ position: 'absolute', top: '80px', right: '20px', zIndex: 1000, display: 'flex', gap: '8px', flexDirection: 'column' }}>
-        <button className="map-control-btn" onClick={() => {
-          if (!availableDistricts) return
-          const highRisk = availableDistricts.filter(d => d.riskClass === 'High' || d.risk_class === 'High')
-          highRisk.slice(0, 10).forEach(d => addDistrict(d.name))
-        }}>+ Top 10 High Risk</button>
-        <button className="map-control-btn" onClick={() => {
-          if (!availableDistricts) return
-          availableDistricts.forEach(d => addDistrict(d.name))
-        }}>+ Select All</button>
-        <button className="map-control-btn" onClick={() => {
-          selectedNames.forEach(name => removeDistrict(name))
-        }}>- Clear All</button>
-      </div>
       <MapControls
         showDots={showDots}
         showBorders={showBorders}
@@ -95,6 +81,18 @@ function MapPanel({
         onToggleBorders={() => setShowBorders((prev) => !prev)}
         playbackSpeed={playbackSpeed}
         onSpeedChange={setPlaybackSpeed}
+        onSelectTop10={() => {
+          if (!availableDistricts) return
+          const highRisk = availableDistricts.filter(d => d.riskClass === 'High' || d.risk_class === 'High')
+          highRisk.slice(0, 10).forEach(d => addDistrict(d.name))
+        }}
+        onSelectAll={() => {
+          if (!availableDistricts) return
+          availableDistricts.forEach(d => addDistrict(d.name))
+        }}
+        onClearAll={() => {
+          selectedNames.forEach(name => removeDistrict(name))
+        }}
       />
       <TimelineScrubber
         currentWeek={currentWeek}

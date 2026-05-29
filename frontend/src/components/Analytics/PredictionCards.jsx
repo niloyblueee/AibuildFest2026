@@ -118,7 +118,7 @@ function PredictionCards({ predictions, infectionData, signals }) {
     )
 
     cards.push(
-      {
+      /*{
         key: 'rt',
         label: 'Rt Estimate',
         value: rtEstimate,
@@ -153,7 +153,7 @@ function PredictionCards({ predictions, infectionData, signals }) {
         trend: stockoutRisk - 50,
         icon: 'SR',
         tone: 'blue',
-      },
+      },*/
     )
   }
 

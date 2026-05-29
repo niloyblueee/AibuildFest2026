@@ -256,14 +256,20 @@ function useSimulation() {
     return defaults.length > 0 ? defaults : DISTRICTS.slice(0, 2)
   })
   const [scenarioName, setScenarioName] = useState('observed_baseline')
+  const [totalVaccineInStore, setTotalVaccineInStore] = useState(5000000)
   const [vaccineAllocations, setVaccineAllocations] = useState(() =>
-    initializeCoverage(selectedDistricts.map((district) => district.name), DEFAULT_COVERAGE_PCT),
+    initializeCoverage(selectedDistricts.map((district) => district.name), 0),
   )
   const [currentWeek, setCurrentWeek] = useState(12)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(PLAYBACK_SPEEDS[0])
   const [modelResults, setModelResults] = useState({})
   const [apiStatus, setApiStatus] = useState({ state: 'idle', error: null })
+
+  const remainingVaccine = useMemo(() => {
+    const allocated = Object.values(vaccineAllocations).reduce((sum, val) => sum + val, 0)
+    return Math.max(0, totalVaccineInStore - allocated)
+  }, [totalVaccineInStore, vaccineAllocations])
 
   useEffect(() => {
     fetch(`${API_BASE}/districts`)
@@ -323,16 +329,13 @@ function useSimulation() {
       setApiStatus({ state: 'loading', error: null })
       try {
         const requests = selectedDistricts.map((district) => {
-          const allocation = vaccineAllocations[district.name] ?? 0
-          const childEstimate = district.population
-            ? district.population * 0.12
-            : 1
-          const coverage = clamp((allocation / childEstimate) * 100, 0, 100)
+          const allocationAmount = vaccineAllocations[district.name] ?? 0
+          const coveragePct = clamp((allocationAmount / (district.population || 1)) * 100, 0, 100)
           return {
             district: toApiDistrictName(district.name),
             scenario_name: scenarioName,
-            coverage_children_pct: allocation,
-            coverage_population_pct: allocation,
+            coverage_children_pct: coveragePct,
+            coverage_population_pct: coveragePct,
             include_daily: true,
             include_hourly: false,
           }
@@ -392,12 +395,19 @@ function useSimulation() {
 
   const setVaccineAllocation = useCallback(
     (name, value) => {
-      setVaccineAllocations((prev) => ({
-        ...prev,
-        [name]: clamp(Math.round(value), 0, 100)
-      }))
+      setVaccineAllocations((prev) => {
+        const otherAllocations = Object.entries(prev).reduce((sum, [k, v]) => {
+          return k !== name ? sum + v : sum
+        }, 0)
+        const maxAllowed = Math.max(0, totalVaccineInStore - otherAllocations)
+        const val = Math.min(Math.max(0, Math.round(value)), maxAllowed)
+        return {
+          ...prev,
+          [name]: val
+        }
+      })
     },
-    [],
+    [totalVaccineInStore],
   )
 
   const weeklySeriesByDistrict = useMemo(() => {
@@ -454,11 +464,18 @@ function useSimulation() {
     selectedDistricts.forEach((district) => {
       const vaccines = vaccineAllocations[district.name] ?? 0
       const cases = getCasesForWeek(district.name, currentWeek)
-      const vaccineShare = vaccines / 100
-      const vaccineShield = 0.18 + vaccineShare * 0.62
+      
+      // Vaccine takes ~2 weeks for full immunity. 
+      // Week 1: 0%, Week 2: 50%, Week 3+: 100%
+      const efficacyFactor = currentWeek <= 1 ? 0 : currentWeek === 2 ? 0.5 : 1
+      const effectiveVaccineShare = clamp(vaccines / (district.population || 1), 0, 1) * efficacyFactor
+      
+      const vaccineShield = 0.18 + effectiveVaccineShare * 0.62
       const adjustedRate = district.baseInfectionRate * (1 - vaccineShield)
-      const activeCases = cases * (0.12 + district.baseInfectionRate * 2)
-      const capacity = district.population * district.healthcareCapacity * 0.015
+      
+      // Research: ~25% of cases need hospitalization. Avg stay is 4.8 days (4.8/7 weeks).
+      const activeCases = cases * 0.25 * (4.8 / 7)
+      const capacity = district.population * district.healthcareCapacity * 0.00005
       const hospitalLoad = clamp((activeCases / capacity) * 100, 0, 100)
       const riskIndex = clamp(
         hospitalLoad * 0.6 + adjustedRate * 1200 + (1 - district.healthcareCapacity) * 20,
@@ -473,6 +490,8 @@ function useSimulation() {
       const casesAverted = baselineCases - scenarioCases
       baselineTotal += baselineCases
       scenarioTotal += scenarioCases
+      
+      const ratio = scenarioCases > 0 ? cases / scenarioCases : 1
 
       byDistrict[district.name] = {
         cases,
@@ -480,7 +499,7 @@ function useSimulation() {
         hospitalLoad,
         riskIndex,
         intensity,
-        vaccineShare,
+        vaccineShare: effectiveVaccineShare,
         adjustedRate,
         population: district.population,
         baselineCases,
@@ -488,8 +507,12 @@ function useSimulation() {
       }
 
       totalCases += cases
-      totalConfirmed += result?.scenario?.confirmed_7d ?? (result?.baseline?.confirmed_7d ?? 0)
-      totalDeaths += result?.scenario?.deaths_7d ?? (result?.baseline?.deaths_7d ?? 0)
+      
+      const conf_7d = result?.scenario?.confirmed_7d ?? (result?.baseline?.confirmed_7d ?? 0)
+      const death_7d = result?.scenario?.deaths_7d ?? (result?.baseline?.deaths_7d ?? 0)
+      totalConfirmed += conf_7d * ratio
+      totalDeaths += death_7d * ratio
+      
       totalHospitalLoad += hospitalLoad
       totalRisk += riskIndex
       baseRateSum += district.baseInfectionRate
@@ -595,7 +618,7 @@ function useSimulation() {
       const metrics = predictions.byDistrict[district.name]
       const intensity = metrics?.intensity ?? 0.2
       const vaccines = vaccineAllocations[district.name] ?? 0
-      const vaccineShare = clamp(vaccines / 100, 0, 1)
+      const vaccineShare = clamp(vaccines / (district.population || 1), 0, 1)
       const baseCount = MAX_POINTS_PER_DISTRICT
       const count = Math.round(
         clamp(baseCount * (1 - vaccineShare), 0, MAX_POINTS_PER_DISTRICT),
@@ -631,13 +654,29 @@ function useSimulation() {
       return values.reduce((sum, value) => sum + value, 0) / values.length
     }
 
+    const baseRt = average('rt_estimate')
+    const baseTp = average('test_positivity_rate')
+    const baseZd = average('zero_dose_risk_score')
+    const baseSr = average('stockout_risk_score')
+
+    const growthFactor = 1 + (predictions.growthRate / 100)
+    
+    let totalVaccines = 0
+    let totalPop = 0
+    selectedDistricts.forEach(d => {
+      totalVaccines += (vaccineAllocations[d.name] ?? 0)
+      totalPop += d.population || 1
+    })
+    const avgVaccineShare = clamp(totalVaccines / totalPop, 0, 1)
+    const allocatedRatio = totalVaccineInStore > 0 ? clamp(totalVaccines / totalVaccineInStore, 0, 1) : 1
+
     return {
-      rtEstimate: average('rt_estimate'),
-      testPositivityRate: average('test_positivity_rate'),
-      zeroDoseRiskScore: average('zero_dose_risk_score'),
-      stockoutRiskScore: average('stockout_risk_score'),
+      rtEstimate: baseRt * growthFactor,
+      testPositivityRate: baseTp * growthFactor,
+      zeroDoseRiskScore: baseZd * (1 - avgVaccineShare * 0.8),
+      stockoutRiskScore: baseSr * (0.5 + 0.5 * allocatedRatio),
     }
-  }, [selectedDistricts, modelResults])
+  }, [selectedDistricts, modelResults, predictions.growthRate, vaccineAllocations, totalVaccineInStore])
 
   return {
     selectedDistricts,
@@ -645,6 +684,9 @@ function useSimulation() {
     removeDistrict,
     vaccineAllocations,
     setVaccineAllocation,
+    totalVaccineInStore,
+    setTotalVaccineInStore,
+    remainingVaccine,
     setScenarioName,
     scenarioName,
     availableDistricts,

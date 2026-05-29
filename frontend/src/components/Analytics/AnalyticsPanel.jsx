@@ -10,6 +10,9 @@ function AnalyticsPanel({
   selectedDistricts,
   vaccineAllocations,
   setVaccineAllocation,
+  totalVaccineInStore,
+  setTotalVaccineInStore,
+  remainingVaccine,
   scenarioName,
   setScenarioName,
   apiStatus,
@@ -35,6 +38,9 @@ function AnalyticsPanel({
           selectedDistricts={selectedDistricts}
           vaccineAllocations={vaccineAllocations}
           setVaccineAllocation={setVaccineAllocation}
+          totalVaccineInStore={totalVaccineInStore}
+          setTotalVaccineInStore={setTotalVaccineInStore}
+          remainingVaccine={remainingVaccine}
           predictions={predictions}
         />
       </section>
