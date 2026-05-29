@@ -24,7 +24,7 @@ function AIInsights({ aiNarrative, predictions }) {
 
     timerRef.current = setTimeout(() => {
       setIsLoading(true)
-      fetch(`${API_BASE}/insight`, {
+      fetch(`${API_BASE}insight`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prediction: predictions }),
