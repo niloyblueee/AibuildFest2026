@@ -6,11 +6,11 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8000
 
-COPY requirements.txt ./
+COPY backend/requirements.txt ./
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
-COPY . .
+COPY backend/ .
 
 EXPOSE 8000
 
