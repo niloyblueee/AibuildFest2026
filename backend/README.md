@@ -14,6 +14,7 @@ pip install -r requirements.txt
 
 (copy paste .env in backend) line 33 :)
 
+
 python train.py
 uvicorn app.main:app --reload --port 8000 #do cd backend first
 
@@ -25,8 +26,7 @@ Frontend
 cd frontend
 npm install
 
-(Optional) set API base:
-setx VITE_API_BASE http://127.0.0.1:8000
+(also .env for frontend-> only 1 line-> VITE_API_BASE=http://localhost:8000)
 
 npm run dev
 
