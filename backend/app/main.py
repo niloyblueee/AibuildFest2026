@@ -2,13 +2,20 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import pandas as pd
-from .config import OPENAI_API_KEY, CORS_ALLOW_CREDENTIALS, CORS_ORIGINS
+from .config import OPENAI_API_KEY, CORS_ALLOW_CREDENTIALS, CORS_ORIGINS, SCRAPE_SCHEDULE_HOURS
 from .curves import build_daily_curve, build_hourly_curve, seed_from_parts
 from .data_loader import get_dataset
+from .data_loader import apply_scrape_updates
 from .features import apply_feature_overrides, normalize_bool_columns
 from .model import get_meta, get_model
 from .scenarios import apply_builtin_scenario, apply_coverage_scenario
 from .schemas import BatchPredictRequest, InsightRequest, PredictRequest
+from .scraper import run_adapters
+from .config import SCRAPED_PATH
+from pathlib import Path
+import logging
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
 
 app = FastAPI(title="Measles Forecast API", version="0.1.0")
 allow_credentials = CORS_ALLOW_CREDENTIALS
@@ -27,6 +34,69 @@ app.add_middleware(
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+def _scheduled_scrape_job() -> None:
+    logging.info("Scheduled scrape job starting")
+    try:
+        # adapters list currently empty; populate `scraper.run_adapters` callers when configured
+        written = run_adapters([])
+        summary = apply_scrape_updates(write_csv=True)
+        logging.info("Scheduled scrape completed; files=%s summary=%s", written, summary)
+    except Exception:
+        logging.exception("Scheduled scrape job failed")
+
+
+@app.on_event("startup")
+def _start_scheduler():
+    logging.info("Starting scheduler for periodic scraping")
+    scheduler = BackgroundScheduler()
+    # schedule at fixed interval (hours)
+    try:
+        interval_hours = int(SCRAPE_SCHEDULE_HOURS)
+    except Exception:
+        interval_hours = 24
+    scheduler.add_job(_scheduled_scrape_job, "interval", hours=interval_hours, next_run_time=datetime.utcnow())
+    scheduler.start()
+    app.state.scheduler = scheduler
+    logging.info("Scheduler started (interval hours=%s)", interval_hours)
+
+
+@app.on_event("shutdown")
+def _stop_scheduler():
+    logging.info("Shutting down scheduler")
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        logging.info("Scheduler shut down")
+
+
+@app.post("/scrape/run")
+def scrape_run():
+    """Trigger a scrape run (adapters must be added to scraper.py)."""
+    # currently run_adapters will be a no-op until adapters are configured
+    try:
+        written = run_adapters([])
+    except Exception:
+        written = []
+
+    summary = apply_scrape_updates(write_csv=True)
+    return {"written_files": [str(p) for p in written], "summary": summary}
+
+
+@app.get("/scrape/status")
+def scrape_status():
+    p = Path(SCRAPED_PATH)
+    files = sorted([str(x.name) for x in p.glob("*.jsonl")]) if p.exists() else []
+    return {"scraped_files": files, "count": len(files)}
+
+
+@app.get("/scrape/logs")
+def scrape_logs():
+    # Lightweight: list recent scraped files
+    p = Path(SCRAPED_PATH)
+    files = sorted([str(x.name) for x in p.glob("*.jsonl")]) if p.exists() else []
+    return {"recent_scrapes": files[-10:]}
 
 
 def _select_baseline_row(df: pd.DataFrame, request: PredictRequest) -> pd.Series:
