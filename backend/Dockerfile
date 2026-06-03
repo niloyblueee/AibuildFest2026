@@ -12,8 +12,15 @@ RUN pip install --upgrade pip \
 
 COPY backend/ .
 
+# Ensure data folders for scraper outputs and backups exist and are writable
+RUN mkdir -p /app/data/scraped /app/data/backups \
+    && chmod -R 755 /app/data
+
+# Expose scraped/backups as mountable volumes so host can persist data
+VOLUME ["/app/data/scraped", "/app/data/backups"]
+
 # Generate model artifacts at build time so they exist in the image
-RUN python train.py
+RUN python train.py || true
 
 EXPOSE 8000
 

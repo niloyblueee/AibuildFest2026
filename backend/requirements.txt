@@ -6,3 +6,7 @@ scikit-learn
 joblib
 python-dotenv
 openai
+requests
+beautifulsoup4
+apscheduler
+pytest
