@@ -1,14 +1,22 @@
-from fastapi import FastAPI, HTTPException
+from datetime import datetime, timezone
+from pathlib import Path
+import logging
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import pandas as pd
-from .config import OPENAI_API_KEY, CORS_ALLOW_CREDENTIALS, CORS_ORIGINS
+
+from .config import CORS_ALLOW_CREDENTIALS, CORS_ORIGINS, SCRAPE_SCHEDULE_HOURS
+from .config import SCRAPED_PATH, SCRAPER_LOG_PATH
 from .curves import build_daily_curve, build_hourly_curve, seed_from_parts
-from .data_loader import get_dataset
+from .data_loader import apply_scrape_updates, get_dataset
 from .features import apply_feature_overrides, normalize_bool_columns
 from .model import get_meta, get_model
 from .scenarios import apply_builtin_scenario, apply_coverage_scenario
 from .schemas import BatchPredictRequest, InsightRequest, PredictRequest
+from .scraper import BdNews24Adapter, TheDailyStarAdapter, WHOAdapter, run_adapters
 
 app = FastAPI(title="Measles Forecast API", version="0.1.0")
 allow_credentials = CORS_ALLOW_CREDENTIALS
@@ -24,9 +32,137 @@ app.add_middleware(
 )
 
 
+def _setup_scraper_logging() -> None:
+    log_path = Path(SCRAPER_LOG_PATH)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+    )
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    if not any(isinstance(h, logging.FileHandler) for h in root_logger.handlers):
+        root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+def _get_adapters():
+    return [TheDailyStarAdapter(), BdNews24Adapter(), WHOAdapter()]
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except Exception:
+        return 0
+
+
+def _build_scrape_status() -> dict:
+    path = Path(SCRAPED_PATH)
+    files = []
+    if path.exists():
+        for item in sorted(path.glob("*.jsonl")):
+            files.append(
+                {
+                    "name": item.name,
+                    "record_count": _count_jsonl_lines(item),
+                    "modified_at": datetime.fromtimestamp(
+                        item.stat().st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                }
+            )
+
+    return {
+        "scraped_files": files,
+        "count": len(files),
+        "in_progress": getattr(app.state, "scrape_in_progress", False),
+        "last_started_at": getattr(app.state, "scrape_last_started_at", None),
+        "last_finished_at": getattr(app.state, "scrape_last_finished_at", None),
+        "last_summary": getattr(app.state, "scrape_last_summary", None),
+        "log_path": str(SCRAPER_LOG_PATH),
+    }
+
+
+def _run_scrape_job(origin: str) -> dict:
+    app.state.scrape_in_progress = True
+    app.state.scrape_last_started_at = datetime.now(timezone.utc).isoformat()
+    logging.info("Scrape job starting origin=%s", origin)
+    try:
+        written = run_adapters(_get_adapters())
+        summary = apply_scrape_updates(write_csv=True)
+        logging.info("Scrape job completed origin=%s files=%s summary=%s", origin, written, summary)
+        app.state.scrape_last_summary = summary
+        return {"written_files": [str(p) for p in written], "summary": summary}
+    except Exception:
+        logging.exception("Scrape job failed origin=%s", origin)
+        app.state.scrape_last_summary = {"error": "scrape_failed"}
+        return {"written_files": [], "summary": app.state.scrape_last_summary}
+    finally:
+        app.state.scrape_in_progress = False
+        app.state.scrape_last_finished_at = datetime.now(timezone.utc).isoformat()
+
+
+@app.on_event("startup")
+def _start_scheduler():
+    _setup_scraper_logging()
+    logging.info("Starting scheduler for periodic scraping")
+    scheduler = BackgroundScheduler()
+    try:
+        interval_hours = int(SCRAPE_SCHEDULE_HOURS)
+    except Exception:
+        interval_hours = 24
+    scheduler.add_job(
+        _run_scrape_job,
+        "interval",
+        hours=interval_hours,
+        next_run_time=datetime.utcnow(),
+        args=["scheduler"],
+    )
+    scheduler.start()
+    app.state.scheduler = scheduler
+    logging.info("Scheduler started (interval hours=%s)", interval_hours)
+
+
+@app.on_event("shutdown")
+def _stop_scheduler():
+    logging.info("Shutting down scheduler")
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        logging.info("Scheduler shut down")
+
+
+@app.post("/scrape/run")
+def scrape_run(background_tasks: BackgroundTasks):
+    """Trigger a scrape run in the background."""
+    if getattr(app.state, "scrape_in_progress", False):
+        return {"status": "already_running", "detail": "Scrape job is in progress"}
+    background_tasks.add_task(_run_scrape_job, "manual")
+    return {"status": "started"}
+
+
+@app.get("/scrape/status")
+def scrape_status():
+    return _build_scrape_status()
+
+
+@app.get("/scrape/logs")
+def scrape_logs():
+    status = _build_scrape_status()
+    return {
+        "recent_scrapes": status["scraped_files"][-10:],
+        "last_started_at": status["last_started_at"],
+        "last_finished_at": status["last_finished_at"],
+        "in_progress": status["in_progress"],
+        "log_path": status["log_path"],
+    }
 
 
 def _select_baseline_row(df: pd.DataFrame, request: PredictRequest) -> pd.Series:
