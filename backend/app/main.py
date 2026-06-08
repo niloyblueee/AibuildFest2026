@@ -17,6 +17,7 @@ from .model import get_meta, get_model
 from .scenarios import apply_builtin_scenario, apply_coverage_scenario
 from .schemas import BatchPredictRequest, InsightRequest, PredictRequest
 from .scraper import BdNews24Adapter, TheDailyStarAdapter, WHOAdapter, run_adapters
+from .db import get_engine, DATA_TABLE_NAME, SCRAPED_TABLE_NAME
 
 app = FastAPI(title="Measles Forecast API", version="0.1.0")
 allow_credentials = CORS_ALLOW_CREDENTIALS
@@ -95,8 +96,8 @@ def _run_scrape_job(origin: str) -> dict:
     app.state.scrape_last_started_at = datetime.now(timezone.utc).isoformat()
     logging.info("Scrape job starting origin=%s", origin)
     try:
-        written = run_adapters(_get_adapters())
-        summary = apply_scrape_updates(write_csv=True)
+        records, written = run_adapters(_get_adapters(), persist_jsonl=False)
+        summary = apply_scrape_updates(write_csv=False, write_db=True, records=records)
         logging.info("Scrape job completed origin=%s files=%s summary=%s", origin, written, summary)
         app.state.scrape_last_summary = summary
         return {"written_files": [str(p) for p in written], "summary": summary}
@@ -151,6 +152,50 @@ def scrape_run(background_tasks: BackgroundTasks):
 @app.get("/scrape/status")
 def scrape_status():
     return _build_scrape_status()
+
+
+@app.get("/db/status")
+def db_status():
+    """Return database connectivity and table status for debugging/deploy checks."""
+    engine = get_engine()
+    configured = engine is not None
+    status = {"configured": configured}
+    if not configured:
+        return status
+
+    try:
+        inspector = None
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("SELECT 1"))
+            except Exception as exc:
+                return {"configured": True, "connected": False, "error": str(exc)}
+            inspector = inspect(engine)
+
+        tables = inspector.get_table_names() if inspector is not None else []
+        status.update({
+            "connected": True,
+            "tables": tables,
+            "has_measles_table": DATA_TABLE_NAME in tables,
+            "has_scraped_table": SCRAPED_TABLE_NAME in tables,
+        })
+
+        # attempt counts for the two tables if present
+        try:
+            with engine.connect() as conn:
+                if DATA_TABLE_NAME in tables:
+                    c = conn.execute(text(f"SELECT COUNT(*) FROM {DATA_TABLE_NAME}"))
+                    status["measles_rows"] = int(c.scalar_one())
+                if SCRAPED_TABLE_NAME in tables:
+                    c2 = conn.execute(text(f"SELECT COUNT(*) FROM {SCRAPED_TABLE_NAME}"))
+                    status["scraped_rows"] = int(c2.scalar_one())
+        except Exception:
+            # ignore row-count errors
+            pass
+
+        return status
+    except Exception as exc:
+        return {"configured": True, "connected": False, "error": str(exc)}
 
 
 @app.get("/scrape/logs")

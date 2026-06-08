@@ -13,7 +13,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from dotenv import load_dotenv
-from app.features import add_date_features, add_derived_features, normalize_bool_columns
+from app.data_loader import get_dataset
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv()
@@ -73,10 +73,7 @@ def select_feature_columns(df: pd.DataFrame) -> list[str]:
 
 
 def main():
-    df = pd.read_csv(DATA_PATH)
-    df = add_date_features(df)
-    df = add_derived_features(df)
-    df = normalize_bool_columns(df)
+    df = get_dataset()
 
     df = df.dropna(subset=TARGET_COLS)
     df["date_ordinal"] = df["date_ordinal"].fillna(0)

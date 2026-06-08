@@ -1,11 +1,13 @@
 import json
 import math
+import shutil
 from pathlib import Path
 from typing import Iterable, List
 
 import pandas as pd
 
 from .config import BACKUP_PATH, DATA_PATH, SCRAPED_PATH
+from .db import load_dataset_from_store, persist_dataset, store_scraped_records
 from .features import add_date_features, add_derived_features, normalize_bool_columns
 
 _DATA_CACHE = None
@@ -36,32 +38,52 @@ def _load_scraped_records(paths: Iterable[Path]) -> List[dict]:
 def get_dataset() -> pd.DataFrame:
     global _DATA_CACHE
     if _DATA_CACHE is None:
-        df = pd.read_csv(DATA_PATH)
+        df = load_dataset_from_store()
+        if df is None:
+            df = pd.read_csv(DATA_PATH)
         df = add_date_features(df)
         df = add_derived_features(df)
         df = normalize_bool_columns(df)
         _DATA_CACHE = df
-    return _DATA_CACHE
+    return _DATA_CACHE.copy()
 
 
-def apply_scrape_updates(write_csv: bool = True) -> dict:
-    """Apply scraped news signals to the dataset and optionally write CSV."""
+def invalidate_dataset_cache() -> None:
+    global _DATA_CACHE
+    _DATA_CACHE = None
+
+
+def apply_scrape_updates(
+    write_csv: bool = False,
+    write_db: bool = True,
+    records: list[dict] | None = None,
+) -> dict:
+    """Apply scraped news signals to the dataset and persist the result."""
     global _DATA_CACHE
     df = get_dataset()
     files = _list_scraped_files()
-    if not files:
-        return {"updated": 0, "files": 0}
+    source_records = records
+    if source_records is None:
+        if not files:
+            return {"updated": 0, "files": 0}
 
-    records = _load_scraped_records(files)
-    if not records:
-        return {"updated": 0, "files": len(files)}
+        source_records = _load_scraped_records(files)
+        if not source_records:
+            return {"updated": 0, "files": len(files)}
+
+    summary = {"updated": 0, "files": len(files)}
+    if write_db:
+        try:
+            summary["scraped_rows_written"] = store_scraped_records(source_records)
+        except Exception:
+            summary["scraped_rows_written"] = 0
 
     districts = df["district"].dropna().unique().tolist()
     counts = {district: 0 for district in districts}
     sources = {district: set() for district in districts}
     latest_dt = None
 
-    for rec in records:
+    for rec in source_records:
         text = " ".join(
             [str(rec.get(k, "")) for k in ("headline", "body", "location_text")]
         ).lower()
@@ -106,16 +128,23 @@ def apply_scrape_updates(write_csv: bool = True) -> dict:
         if not mask.any():
             continue
         delta = float(math.log1p(cnt))
-        df.loc[mask, "news_enriched_risk_score"] = df.loc[mask, "news_enriched_risk_score"].fillna(0) + delta
+        df.loc[mask, "news_enriched_risk_score"] = (
+            df.loc[mask, "news_enriched_risk_score"].fillna(0) + delta
+        )
         df.loc[mask, "news_scrape_date"] = latest_dt
         df.loc[mask, "news_sources_count"] = len(sources[district])
         df.loc[mask, "news_score_delta"] = delta
         df.loc[mask, "news_sources_list"] = ",".join(sorted(sources[district]))
         updated += int(mask.sum())
 
-    _DATA_CACHE = df
+    summary.update({"updated": updated, "latest_date": str(latest_dt)})
 
-    summary = {"updated": updated, "files": len(files), "latest_date": str(latest_dt)}
+    if write_db:
+        try:
+            summary["wrote_db"] = persist_dataset(df)
+        except Exception:
+            summary["wrote_db"] = False
+        _DATA_CACHE = df
 
     if write_csv:
         try:
@@ -123,7 +152,11 @@ def apply_scrape_updates(write_csv: bool = True) -> dict:
             backup_path.mkdir(parents=True, exist_ok=True)
             ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
             backup_target = backup_path / f"bd64_backup_{ts}.csv"
-            Path(DATA_PATH).resolve().replace(backup_target)
+            if Path(DATA_PATH).exists():
+                shutil.copy2(DATA_PATH, backup_target)
+                summary["backup_created"] = True
+            else:
+                summary["backup_created"] = False
         except Exception:
             summary["backup_failed"] = True
 

@@ -9,3 +9,5 @@ openai
 requests
 beautifulsoup4
 apscheduler
+SQLAlchemy
+PyMySQL

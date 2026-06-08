@@ -182,7 +182,7 @@ def write_jsonl(records: Iterable[ScrapeRecord], *, prefix: str | None = None) -
     return out
 
 
-def run_adapters(adapters: List[BaseAdapter]) -> List[Path]:
+def collect_records(adapters: List[BaseAdapter]) -> List[ScrapeRecord]:
     all_records: List[ScrapeRecord] = []
     for adapter in adapters:
         try:
@@ -191,14 +191,24 @@ def run_adapters(adapters: List[BaseAdapter]) -> List[Path]:
         except Exception:
             continue
 
-    if not all_records:
-        return []
+    return all_records
 
-    path = write_jsonl(all_records)
-    return [path]
+
+def run_adapters(adapters: List[BaseAdapter], persist_jsonl: bool = True) -> tuple[List[dict], List[Path]]:
+    all_records = collect_records(adapters)
+    if not all_records:
+        return [], []
+
+    written: List[Path] = []
+    if persist_jsonl:
+        path = write_jsonl(all_records)
+        written = [path]
+
+    return [record.to_dict() for record in all_records], written
 
 
 if __name__ == "__main__":
     adapters = [TheDailyStarAdapter(), BdNews24Adapter(), WHOAdapter()]
-    written = run_adapters(adapters)
+    records, written = run_adapters(adapters)
+    print("Records:", len(records))
     print("Wrote:", written)
