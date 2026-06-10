@@ -2,6 +2,7 @@ import VaccineSliders from './VaccineSliders.jsx'
 import PredictionCards from './PredictionCards.jsx'
 import AIInsights from './AIInsights.jsx'
 import StatCharts from './StatCharts.jsx'
+import SuggestionPanel from './SuggestionPanel.jsx'
 import './AnalyticsPanel.css'
 
 import ScenarioSelector from './ScenarioSelector.jsx'
@@ -23,6 +24,9 @@ function AnalyticsPanel({
   spreadAcceleration,
   aiNarrative,
   signals,
+  suggestions,
+  suggestionsStatus,
+  requestInterventionSuggestions,
 }) {
   return (
     <div className="analytics-panel">
@@ -42,6 +46,20 @@ function AnalyticsPanel({
           setTotalVaccineInStore={setTotalVaccineInStore}
           remainingVaccine={remainingVaccine}
           predictions={predictions}
+        />
+      </section>
+
+      <section className="panel-section">
+        <div className="section-header">
+          <h2>Optimal Vaccine Plans</h2>
+          <p>Request recommended coverage allocations for selected districts.</p>
+        </div>
+        <SuggestionPanel
+          selectedDistricts={selectedDistricts}
+          scenarioName={scenarioName}
+          requestSuggestions={requestInterventionSuggestions}
+          suggestions={suggestions}
+          suggestionsStatus={suggestionsStatus}
         />
       </section>
 

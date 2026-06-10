@@ -51,6 +51,9 @@ function App() {
             spreadAcceleration={simulation.spreadAcceleration}
             aiNarrative={simulation.aiNarrative}
             signals={simulation.signals}
+            suggestions={simulation.suggestions}
+            suggestionsStatus={simulation.suggestionsStatus}
+            requestInterventionSuggestions={simulation.requestInterventionSuggestions}
           />
         </section>
       </main>

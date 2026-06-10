@@ -23,3 +23,12 @@ class BatchPredictRequest(BaseModel):
 
 class InsightRequest(BaseModel):
     prediction: Dict[str, Any]
+
+
+class SuggestInterventionRequest(BaseModel):
+    districts: List[str]
+    scenario_name: str = "observed_baseline"
+    coverage_options: List[float] | None = None
+    allocation_options: List[float] | None = None
+    total_vaccine_budget: float | None = Field(default=None, gt=0)
+    num_suggestions: int = Field(default=3, ge=1, le=10)

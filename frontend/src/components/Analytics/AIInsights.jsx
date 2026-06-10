@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-
-const API_BASE = import.meta.env.VITE_API_BASE
+import { API_BASE_ERROR, getApiBase } from '../../lib/apiBase'
 
 function AIInsights({ aiNarrative, predictions }) {
   const [insight, setInsight] = useState('')
@@ -23,8 +22,15 @@ function AIInsights({ aiNarrative, predictions }) {
     if (timerRef.current) clearTimeout(timerRef.current)
 
     timerRef.current = setTimeout(() => {
+      const baseUrl = getApiBase()
+      if (!baseUrl) {
+        console.error(API_BASE_ERROR)
+        setIsLoading(false)
+        return
+      }
+
       setIsLoading(true)
-      fetch(`${API_BASE}insight`, {
+      fetch(`${baseUrl}/insight`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prediction: predictions }),

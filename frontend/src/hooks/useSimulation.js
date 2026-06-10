@@ -264,6 +264,8 @@ function useSimulation() {
   const [playbackSpeed, setPlaybackSpeed] = useState(PLAYBACK_SPEEDS[0])
   const [modelResults, setModelResults] = useState({})
   const [apiStatus, setApiStatus] = useState({ state: 'idle', error: null })
+  const [suggestions, setSuggestions] = useState([])
+  const [suggestionsStatus, setSuggestionsStatus] = useState({ state: 'idle', error: null })
 
   const remainingVaccine = useMemo(() => {
     const allocated = Object.values(vaccineAllocations).reduce((sum, val) => sum + val, 0)
@@ -319,6 +321,48 @@ function useSimulation() {
     setIsPlaying((prev) => !prev)
   }, [])
 
+  const requestInterventionSuggestions = useCallback(async () => {
+    if (selectedDistricts.length === 0) {
+      setSuggestions([])
+      setSuggestionsStatus({ state: 'error', error: 'Select one or more districts first.' })
+      return
+    }
+
+    const baseUrl = getApiBase()
+    if (!baseUrl) {
+      setSuggestionsStatus({ state: 'error', error: API_BASE_ERROR })
+      return
+    }
+
+    setSuggestionsStatus({ state: 'loading', error: null })
+
+    try {
+      const payload = {
+        districts: selectedDistricts.map((district) => toApiDistrictName(district.name)),
+        scenario_name: scenarioName,
+        allocation_options: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+        total_vaccine_budget: totalVaccineInStore,
+        num_suggestions: 3,
+      }
+      const response = await fetch(`${baseUrl}/api/v1/suggest-interventions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || response.statusText)
+      }
+
+      const data = await response.json()
+      setSuggestions(data.suggestions || [])
+      setSuggestionsStatus({ state: 'ready', error: null })
+    } catch (error) {
+      setSuggestions([])
+      setSuggestionsStatus({ state: 'error', error: error?.message || 'Failed to fetch suggestions.' })
+    }
+  }, [scenarioName, selectedDistricts, totalVaccineInStore])
 
 
   useEffect(() => {
@@ -718,6 +762,9 @@ function useSimulation() {
     resolveDistrictName,
     signals,
     apiStatus,
+    suggestions,
+    suggestionsStatus,
+    requestInterventionSuggestions,
   }
 }
 

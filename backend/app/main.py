@@ -14,8 +14,9 @@ from .curves import build_daily_curve, build_hourly_curve, seed_from_parts
 from .data_loader import apply_scrape_updates, get_dataset
 from .features import apply_feature_overrides, normalize_bool_columns
 from .model import get_meta, get_model
+from .optimize import suggest_best_interventions
 from .scenarios import apply_builtin_scenario, apply_coverage_scenario
-from .schemas import BatchPredictRequest, InsightRequest, PredictRequest
+from .schemas import BatchPredictRequest, InsightRequest, PredictRequest, SuggestInterventionRequest
 from .scraper import BdNews24Adapter, TheDailyStarAdapter, WHOAdapter, run_adapters
 
 app = FastAPI(title="Measles Forecast API", version="0.1.0")
@@ -436,6 +437,23 @@ def batch_predict(request: BatchPredictRequest):
                 }
             )
     return {"results": results}
+
+
+@app.post("/api/v1/suggest-interventions")
+def suggest_interventions(request: SuggestInterventionRequest):
+    df = get_dataset()
+    meta = get_meta()
+    suggestions = suggest_best_interventions(
+        df=df,
+        selected_districts=request.districts,
+        scenario_name=request.scenario_name,
+        feature_cols=meta.get("feature_cols", []),
+        coverage_options=request.coverage_options,
+        allocation_options=request.allocation_options,
+        total_vaccine_budget=request.total_vaccine_budget,
+        num_suggestions=request.num_suggestions,
+    )
+    return {"suggestions": suggestions}
 
 
 @app.post("/insight")
